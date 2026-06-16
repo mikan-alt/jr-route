@@ -14,6 +14,10 @@ h1 { margin:0 0 3px; font-size:16px; line-height:1.25; }
 .controls { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
 button { border:1px solid var(--line); background:#fff; color:var(--ink); border-radius:999px; padding:6px 9px; font-weight:700; font-size:12px; }
 button.primary { background:var(--accent); color:white; border-color:var(--accent); }
+.timepick { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:8px; font-size:12px; }
+.timepick label { color:var(--muted); font-weight:700; }
+.timepick input[type="time"] { border:1px solid var(--line); background:white; color:var(--ink); border-radius:10px; padding:6px 8px; font-size:14px; font-weight:800; }
+button.small { padding:5px 8px; font-size:11px; }
 main { padding:8px 8px 24px; max-width:760px; margin:auto; }
 .status { background:#eaf1ff; border:1px solid #c8d8ff; padding:7px 9px; border-radius:10px; margin-bottom:8px; font-size:12px; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:12px; margin:6px 0; padding:8px 9px; box-shadow:0 1px 2px rgba(20,30,50,.04); }
@@ -46,11 +50,17 @@ footer { color:var(--muted); font-size:11px; padding:10px 4px 20px; }
 <body>
 <header>
   <h1>JR野田 → 新今宮 → 岸和田 → 貝塚 → 貝塚市役所前</h1>
-  <div class="sub">平日ダイヤ／新今宮〜岸和田はラピートβ・サザン優先。開いた時刻以降の候補を表示します。</div>
+  <div class="sub">平日ダイヤ／新今宮〜岸和田はラピートβ・サザン優先。現在時刻または指定時刻以降の候補を表示します。</div>
   <div class="controls">
-    <button class="primary" onclick="render('future')">これから</button>
-    <button onclick="render('all')">全候補</button>
-    <button onclick="render('limited')">特急時刻表だけ</button>
+    <button id="btnFuture" class="primary" onclick="setMode('future')">これから</button>
+    <button id="btnAll" onclick="setMode('all')">全候補</button>
+    <button id="btnLimited" onclick="setMode('limited')">特急時刻表だけ</button>
+  </div>
+  <div class="timepick">
+    <label for="baseTime">表示基準</label>
+    <input id="baseTime" type="time" step="60" />
+    <button class="small primary" onclick="applySpecifiedTime()">この時刻で表示</button>
+    <button class="small" onclick="useCurrentTime()">現在時刻に戻す</button>
   </div>
 </header>
 <main>
@@ -67,6 +77,18 @@ const JR = [{"dep":"05:01","arr":"05:14","type":"JR大阪環状線"},{"dep":"05:
 function toMin(t) { let [h,m]=t.split(':').map(Number); if(h===0) h=24; return h*60+m; }
 function nowMin() { const d=new Date(); let h=d.getHours(), m=d.getMinutes(); if(h===0) h=24; return h*60+m; }
 function fmtNow() { const d=new Date(); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
+function setInputToNow() { const el=document.getElementById('baseTime'); if(el) el.value=fmtNow(); }
+function inputTimeMin() { const v=document.getElementById('baseTime')?.value; return v ? toMin(v) : nowMin(); }
+let currentMode='future';
+let useSpecified=false;
+function setActiveButton(mode) {
+  [['future','btnFuture'],['all','btnAll'],['limited','btnLimited']].forEach(([m,id])=>{
+    const b=document.getElementById(id); if(b) b.classList.toggle('primary', m===mode);
+  });
+}
+function setMode(mode) { currentMode=mode; setActiveButton(mode); render(mode); }
+function applySpecifiedTime() { useSpecified=true; setMode(currentMode); }
+function useCurrentTime() { useSpecified=false; setInputToNow(); setMode(currentMode); }
 function routeCard(r, idx, isNext) {
   if(!r.nankaiDep) {
     return `<div class="card"><div class="head"><div class="times">${r.jrDep} 発</div><span class="badge">接続なし</span></div><div class="warn">${r.note}</div></div>`;
@@ -90,17 +112,23 @@ function routeCard(r, idx, isNext) {
 
 function render(mode='future') {
   const app=document.getElementById('app'); const status=document.getElementById('status');
-  const n=nowMin();
-  status.textContent=`現在時刻 ${fmtNow()} ／ 表示モード: ${mode==='future'?'これから乗れる候補':mode==='all'?'全候補':'新今宮発ラピートβ・サザン時刻表'}`;
+  const base = useSpecified ? inputTimeMin() : nowMin();
+  const inputValue = document.getElementById('baseTime')?.value || fmtNow();
+  const label = useSpecified ? `指定時刻 ${inputValue}` : `現在時刻 ${fmtNow()}`;
+  status.textContent=`${label} 基準 ／ 表示モード: ${mode==='future'?'基準時刻以降の候補':mode==='all'?'全候補':'新今宮発ラピートβ・サザン時刻表'}`;
   if(mode==='limited') {
-    app.innerHTML = `<div class="tablewrap"><table><thead><tr><th>新今宮発</th><th>種別・号数</th><th>岸和田着</th></tr></thead><tbody>${LIMITED.map(x=>`<tr class="limited-row"><td>${x.dep}</td><td>★ ${x.name}</td><td>${x.arr}</td></tr>`).join('')}</tbody></table></div>`;
+    const rows = useSpecified ? LIMITED.filter(x=>toMin(x.dep)>=base) : LIMITED;
+    if(!rows.length) { app.innerHTML='<div class="empty">基準時刻以降の特急はありません。全候補表示で時刻表は確認できます。</div>'; return; }
+    app.innerHTML = `<div class="tablewrap"><table><thead><tr><th>新今宮発</th><th>種別・号数</th><th>岸和田着</th></tr></thead><tbody>${rows.map(x=>`<tr class="limited-row"><td>${x.dep}</td><td>★ ${x.name}</td><td>${x.arr}</td></tr>`).join('')}</tbody></table></div>`;
     return;
   }
-  let list = mode==='all' ? ROUTES : ROUTES.filter(r=>toMin(r.jrDep)>=n);
-  if(!list.length) { app.innerHTML='<div class="empty">今日これから利用できる候補はありません。全候補表示で時刻表は確認できます。</div>'; return; }
+  let list = mode==='all' ? ROUTES : ROUTES.filter(r=>toMin(r.jrDep)>=base);
+  if(!list.length) { app.innerHTML='<div class="empty">基準時刻以降に利用できる候補はありません。全候補表示で時刻表は確認できます。</div>'; return; }
   if(mode==='future') list=list.slice(0,10);
   app.innerHTML = list.map((r,i)=>routeCard(r,i, mode==='future' && i===0)).join('');
 }
+setInputToNow();
+document.getElementById('baseTime')?.addEventListener('change', ()=>{ useSpecified=true; setMode(currentMode); });
 render('future');
 </script>
 </body>
